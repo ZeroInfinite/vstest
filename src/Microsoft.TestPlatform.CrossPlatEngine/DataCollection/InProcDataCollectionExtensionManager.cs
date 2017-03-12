@@ -8,51 +8,172 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
     using System.Linq;
     using System.Reflection;
 
+    using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection.Interfaces;
+    using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Execution;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.DataCollection;
+    using Microsoft.VisualStudio.TestPlatform.ObjectModel.DataCollector.InProcDataCollector;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.InProcDataCollector;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Utilities;
-    using Microsoft.VisualStudio.TestPlatform.ObjectModel.DataCollector.InProcDataCollector;
-    using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Execution;
-    using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection.Interfaces;
 
     /// <summary>
     /// The in process data collection extension manager.
     /// </summary>
     internal class InProcDataCollectionExtensionManager
     {
-        protected IDictionary<string, IInProcDataCollector> inProcDataCollectors;
-        private IDataCollectionSink inProcDataCollectionSink;
+        internal IDictionary<string, IInProcDataCollector> InProcDataCollectors;
 
-        private IDictionary<Guid, List<TestResult>> testResultDictionary;
-        private HashSet<Guid> testCaseEndStatusMap;
-        private ITestRunCache testRunCache;
+        private IDataCollectionSink inProcDataCollectionSink;
 
         /// <summary>
         /// Loaded in-proc datacollectors collection
         /// </summary>
         private IEnumerable<DataCollectorSettings> inProcDataCollectorSettingsCollection;
 
-        private object testCaseEndStatusSyncObject = new object();
-
-        public InProcDataCollectionExtensionManager(string runSettings, ITestRunCache testRunCache)
+        /// <summary>
+        /// Initializes a new instance of the <see cref="InProcDataCollectionExtensionManager"/> class.
+        /// </summary>
+        /// <param name="runSettings">
+        /// The run settings.
+        /// </param>
+        /// <param name="testRunCache">
+        /// The test run cache.
+        /// </param>
+        /// <param name="dataCollectionTestCaseEventManager">
+        /// The data collection test case event manager.
+        /// </param>
+        public InProcDataCollectionExtensionManager(string runSettings, ITestRunCache testRunCache, IDataCollectionTestCaseEventManager dataCollectionTestCaseEventManager)
         {
-            this.testRunCache = testRunCache;
-
-            this.inProcDataCollectors = new Dictionary<string, IInProcDataCollector>();
+            this.InProcDataCollectors = new Dictionary<string, IInProcDataCollector>();
             this.inProcDataCollectionSink = new InProcDataCollectionSink();
-            this.testResultDictionary = new Dictionary<Guid, List<TestResult>>();
-            this.testCaseEndStatusMap = new HashSet<Guid>();
 
             // Initialize InProcDataCollectors
             this.InitializeInProcDataCollectors(runSettings);
+
+            if (this.IsInProcDataCollectionEnabled)
+            {
+                dataCollectionTestCaseEventManager.TestCaseEnd += this.TriggerTestCaseEnd;
+                dataCollectionTestCaseEventManager.TestCaseStart += this.TriggerTestCaseStart;
+                dataCollectionTestCaseEventManager.TestResult += this.TriggerUpdateTestResult;
+                dataCollectionTestCaseEventManager.SessionStart += this.TriggerTestSessionStart;
+                dataCollectionTestCaseEventManager.SessionEnd += this.TriggerTestSessionEnd;
+            }
         }
 
+        /// <summary>
+        /// Gets a value indicating whether is in proc data collection enabled.
+        /// </summary>
         public bool IsInProcDataCollectionEnabled { get; private set; }
 
         /// <summary>
+        /// Creates data collector instance based on datacollector settings provided. 
+        /// </summary>
+        /// <param name="dataCollectorSettings">
+        /// Settings to be used for creating DataCollector.
+        /// </param>
+        /// <param name="interfaceTypeInfo">
+        /// TypeInfo of datacollector.
+        /// </param>
+        /// <returns>
+        /// The <see cref="IInProcDataCollector"/>.
+        /// </returns>
+        protected virtual IInProcDataCollector CreateDataCollector(DataCollectorSettings dataCollectorSettings, TypeInfo interfaceTypeInfo)
+        {
+            var inProcDataCollector = new InProcDataCollector(
+                dataCollectorSettings.CodeBase,
+                dataCollectorSettings.AssemblyQualifiedName,
+                interfaceTypeInfo,
+                dataCollectorSettings.Configuration.OuterXml);
+
+            inProcDataCollector.LoadDataCollector(this.inProcDataCollectionSink);
+
+            return inProcDataCollector;
+        }
+
+        /// <summary>
+        /// The trigger test session start.
+        /// </summary>
+        /// <param name="sender">
+        /// The sender.
+        /// </param>
+        /// <param name="e">
+        /// The e.
+        /// </param>
+        private void TriggerTestSessionStart(object sender, SessionStartEventArgs e)
+        {
+            TestSessionStartArgs testSessionStartArgs = new TestSessionStartArgs();
+            this.TriggerInProcDataCollectionMethods(Constants.TestSessionStartMethodName, testSessionStartArgs);
+        }
+
+        /// <summary>
+        /// The trigger session end.
+        /// </summary>
+        /// <param name="sender">
+        /// The sender.
+        /// </param>
+        /// <param name="e">
+        /// The e.
+        /// </param>
+        private void TriggerTestSessionEnd(object sender, SessionEndEventArgs e)
+        {
+            var testSessionEndArgs = new TestSessionEndArgs();
+            this.TriggerInProcDataCollectionMethods(Constants.TestSessionEndMethodName, testSessionEndArgs);
+        }
+
+        /// <summary>
+        /// The trigger test case start.
+        /// </summary>
+        /// <param name="sender">
+        /// The sender.
+        /// </param>
+        /// <param name="e">
+        /// The e.
+        /// </param>
+        private void TriggerTestCaseStart(object sender, TestCaseStartEventArgs e)
+        {
+            var testCaseStartArgs = new TestCaseStartArgs(e.TestElement);
+            this.TriggerInProcDataCollectionMethods(Constants.TestCaseStartMethodName, testCaseStartArgs);
+        }
+
+        /// <summary>
+        /// The trigger test case end.
+        /// </summary>
+        /// <param name="sender">
+        /// The sender.
+        /// </param>
+        /// <param name="e">
+        /// The e.
+        /// </param>
+        private void TriggerTestCaseEnd(object sender, TestCaseEndEventArgs e)
+        {
+            var dataCollectionContext = new DataCollectionContext(e.TestElement);
+            var testCaseEndArgs = new TestCaseEndArgs(dataCollectionContext, e.TestOutcome);
+            this.TriggerInProcDataCollectionMethods(Constants.TestCaseEndMethodName, testCaseEndArgs);
+
+            ((InProcDataCollectionSink)this.inProcDataCollectionSink).RemoveDataCollectionDataSetForTestCase(e.TestCaseId);
+        }
+
+        /// <summary>
+        /// Triggers the send test result method
+        /// </summary>
+        /// <param name="sender">
+        /// The sender.
+        /// </param>
+        /// <param name="e">
+        /// The e.
+        /// </param>
+        private void TriggerUpdateTestResult(object sender, TestResultEventArgs e)
+        {
+            // Just set the cached in-proc data if already exists
+            this.SetInProcDataCollectionDataInTestResult(e.TestResult);
+        }
+
+        /// <summary>
         /// Loads all the inproc data collector dlls
-        /// </summary>       
+        /// </summary>
+        /// <param name="runSettings">
+        /// The run Settings.
+        /// </param>
         private void InitializeInProcDataCollectors(string runSettings)
         {
             try
@@ -74,7 +195,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
                     foreach (var inProcDc in this.inProcDataCollectorSettingsCollection)
                     {
                         var inProcDataCollector = this.CreateDataCollector(inProcDc, interfaceTypeInfo);
-                        this.inProcDataCollectors[inProcDataCollector.AssemblyQualifiedName] = inProcDataCollector;
+                        this.InProcDataCollectors[inProcDataCollector.AssemblyQualifiedName] = inProcDataCollector;
                     }
                 }
             }
@@ -84,146 +205,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
             }
             finally
             {
-                this.IsInProcDataCollectionEnabled = this.inProcDataCollectors.Any();
-            }
-        }
-
-        protected virtual IInProcDataCollector CreateDataCollector(DataCollectorSettings dataCollectorSettings, TypeInfo interfaceTypeInfo)
-        {
-            var inProcDataCollector = new InProcDataCollector(dataCollectorSettings.CodeBase, dataCollectorSettings.AssemblyQualifiedName,
-                interfaceTypeInfo, dataCollectorSettings.Configuration.OuterXml);
-
-            inProcDataCollector.LoadDataCollector(inProcDataCollectionSink);
-
-            return inProcDataCollector;
-        }
-
-        /// <summary>
-        /// The trigger session start.
-        /// </summary>
-        public virtual void TriggerTestSessionStart()
-        {
-            this.testCaseEndStatusMap.Clear();
-            this.testResultDictionary.Clear();
-
-            TestSessionStartArgs testSessionStartArgs = new TestSessionStartArgs();
-            this.TriggerInProcDataCollectionMethods(Constants.TestSessionStartMethodName, testSessionStartArgs);
-        }
-
-        /// <summary>
-        /// The trigger session end.
-        /// </summary>
-        public virtual void TriggerTestSessionEnd()
-        {
-            var testSessionEndArgs = new TestSessionEndArgs();
-            this.TriggerInProcDataCollectionMethods(Constants.TestSessionEndMethodName, testSessionEndArgs);
-        }
-
-        /// <summary>
-        /// The trigger test case start.
-        /// </summary>
-        public virtual void TriggerTestCaseStart(TestCase testCase)
-        {
-            lock (testCaseEndStatusSyncObject)
-            {
-                this.testCaseEndStatusMap.Remove(testCase.Id);
-            }
-
-            var testCaseStartArgs = new TestCaseStartArgs(testCase);
-            this.TriggerInProcDataCollectionMethods(Constants.TestCaseStartMethodName, testCaseStartArgs);
-        }
-
-        /// <summary>
-        /// The trigger test case end.
-        /// </summary>
-        public virtual void TriggerTestCaseEnd(TestCase testCase, TestOutcome outcome)
-        {
-            bool isTestCaseEndAlreadySent = false;
-            lock (testCaseEndStatusSyncObject)
-            {
-                isTestCaseEndAlreadySent = this.testCaseEndStatusMap.Contains(testCase.Id);
-                if (!isTestCaseEndAlreadySent)
-                {
-                    this.testCaseEndStatusMap.Add(testCase.Id);
-                }
-
-                // Do not support multiple - testcasends for a single test case start
-                // TestCaseEnd must always be preceded by testcasestart for a given test case id
-                if (!isTestCaseEndAlreadySent)
-                {
-                    var dataCollectionContext = new DataCollectionContext(testCase);
-                    var testCaseEndArgs = new TestCaseEndArgs(dataCollectionContext, outcome);
-
-                    // Call all in-proc datacollectors - TestCaseEnd event
-                    this.TriggerInProcDataCollectionMethods(Constants.TestCaseEndMethodName, testCaseEndArgs);
-
-                    // If dictionary contains results for this test case, update them with in-proc data and flush them
-                    if (testResultDictionary.ContainsKey(testCase.Id))
-                    {
-                        foreach (var testResult in testResultDictionary[testCase.Id])
-                        {
-                            this.SetInProcDataCollectionDataInTestResult(testResult);
-
-                            // TestResult updated with in-proc data, just flush
-                            this.testRunCache.OnNewTestResult(testResult);
-                        }
-
-                        this.testResultDictionary.Remove(testCase.Id);
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Triggers the send test result method
-        /// </summary>
-        /// <param name="testResult"></param>
-        /// <returns>True, if result can be flushed. False, otherwise</returns>
-        public virtual bool TriggerUpdateTestResult(TestResult testResult)
-        {
-            bool allowTestResultFlush = true;
-            var testCaseId = testResult.TestCase.Id;
-
-            lock (testCaseEndStatusSyncObject)
-            {
-                if (this.testCaseEndStatusMap.Contains(testCaseId))
-                {
-                    // Just set the cached in-proc data if already exists
-                    this.SetInProcDataCollectionDataInTestResult(testResult);
-                }
-                else
-                {
-                    // No TestCaseEnd received yet
-                    // We need to wait for testcaseend before flushing
-                    allowTestResultFlush = false;
-
-                    // Cache results so we can flush later with in proc data
-                    if (testResultDictionary.ContainsKey(testCaseId))
-                    {
-                        testResultDictionary[testCaseId].Add(testResult);
-                    }
-                    else
-                    {
-                        testResultDictionary.Add(testCaseId, new List<TestResult>() { testResult });
-                    }
-                }
-            }
-            return allowTestResultFlush;
-        }
-
-        /// <summary>
-        /// Flush any test results that are cached in dictionary
-        /// </summary>
-        public void FlushLastChunkResults()
-        {
-            // Can happen if we cached test results expecting a test case end event for them
-            // If test case end events never come, we have to flush all of them 
-            foreach(var results in this.testResultDictionary.Values)
-            {
-                foreach(var result in results)
-                {
-                    this.testRunCache.OnNewTestResult(result);
-                }
+                this.IsInProcDataCollectionEnabled = this.InProcDataCollectors.Any();
             }
         }
 
@@ -231,7 +213,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
         {
             try
             {
-                foreach (var inProcDc in this.inProcDataCollectors.Values)
+                foreach (var inProcDc in this.InProcDataCollectors.Values)
                 {
                     inProcDc.TriggerInProcDataCollectionMethod(methodName, methodArg);
                 }
@@ -246,15 +228,15 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
         /// Set the data sent via datacollection sink in the testresult property for upstream applications to read.
         /// And removes the data from the dictionary.
         /// </summary>
-        /// <param name="testResultArg"></param>
+        /// <param name="testResult">
+        /// The test Result.
+        /// </param>
         private void SetInProcDataCollectionDataInTestResult(TestResult testResult)
         {
-            //Loops through each datacollector reads the data collection data and sets as TestResult property.
-            foreach (var entry in this.inProcDataCollectors)
+            // Loops through each datacollector reads the data collection data and sets as TestResult property.
+            foreach (var entry in this.InProcDataCollectors)
             {
-                var dataCollectionData =
-                    ((InProcDataCollectionSink)this.inProcDataCollectionSink).GetDataCollectionDataSetForTestCase(
-                        testResult.TestCase.Id);
+                var dataCollectionData = ((InProcDataCollectionSink)this.inProcDataCollectionSink).GetDataCollectionDataSetForTestCase(testResult.TestCase.Id);
 
                 foreach (var keyValuePair in dataCollectionData)
                 {
@@ -265,7 +247,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection
         }
     }
 
-    public static class Constants
+    internal static class Constants
     {
         /// <summary>
         /// The test session start method name.

@@ -6,17 +6,19 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
     using System;
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
+    using System.Diagnostics;
 
+    using Microsoft.VisualStudio.TestPlatform.Common.DataCollection;
+    using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.DataCollection.Interfaces;
     using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection;
     using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.DataCollection.Interfaces;
+    using Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Helpers.Interfaces;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Logging;
     using Microsoft.VisualStudio.TestTools.UnitTesting;
 
     using Moq;
-    using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.DataCollection.Interfaces;
-    using Microsoft.VisualStudio.TestPlatform.Common.DataCollection;
 
     [TestClass]
     public class ProxyDataCollectionManagerTests
@@ -24,19 +26,21 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
         private DummyDataCollectionRequestSender mockDataCollectionRequestSender;
         private ProxyDataCollectionManager proxyDataCollectionManager;
         private DummyDataCollectionLauncher mockDataCollectionLauncher;
+        private Mock<IProcessHelper> mockProcessHelper;
 
         [TestInitialize]
         public void Initialize()
         {
             this.mockDataCollectionRequestSender = new DummyDataCollectionRequestSender();
             this.mockDataCollectionLauncher = new DummyDataCollectionLauncher();
-            this.proxyDataCollectionManager = new ProxyDataCollectionManager(Architecture.AnyCPU, string.Empty, this.mockDataCollectionRequestSender, this.mockDataCollectionLauncher);
+            this.mockProcessHelper = new Mock<IProcessHelper>();
+            this.proxyDataCollectionManager = new ProxyDataCollectionManager(string.Empty, this.mockDataCollectionRequestSender, this.mockProcessHelper.Object, this.mockDataCollectionLauncher);
         }
 
         [TestMethod]
-        public void InitializeSocketCommunicationShouldInitializeCommunication()
+        public void InitializeShouldInitializeCommunication()
         {
-            this.proxyDataCollectionManager.InitializeSocketCommunication(Architecture.X86);
+            this.proxyDataCollectionManager.Initialize();
 
             Assert.IsTrue(this.mockDataCollectionLauncher.dataCollectorLaunched);
             Assert.IsTrue(this.mockDataCollectionRequestSender.waitForRequestHandlerConnection);
@@ -46,16 +50,15 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
         [TestMethod]
         public void BeforeTestRunStartShouldReturnDataCollectorParameters()
         {
-            BeforeTestRunStartResult res = new BeforeTestRunStartResult(new Dictionary<string, string>(), true, 123);
+            BeforeTestRunStartResult res = new BeforeTestRunStartResult(new Dictionary<string, string>(), 123);
             this.mockDataCollectionRequestSender.BeforeTestRunStartResult = res;
 
-            var result = proxyDataCollectionManager.BeforeTestRunStart(true, true, null);
+            var result = this.proxyDataCollectionManager.BeforeTestRunStart(true, true, null);
 
             Assert.IsTrue(this.mockDataCollectionRequestSender.sendBeforeTestRunStartAndGetResult);
             Assert.IsNotNull(result);
             Assert.AreEqual(res.DataCollectionEventsPort, result.DataCollectionEventsPort);
             Assert.AreEqual(res.EnvironmentVariables.Count, result.EnvironmentVariables.Count);
-            Assert.AreEqual(res.AreTestCaseLevelEventsRequired, result.AreTestCaseLevelEventsRequired);
         }
 
         [TestMethod]
@@ -69,7 +72,6 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
             var result = this.proxyDataCollectionManager.BeforeTestRunStart(true, true, mockRunEventsHandler.Object);
 
             mockRunEventsHandler.Verify(eh => eh.HandleLogMessage(TestMessageLevel.Error, "SocketException"), Times.Once);
-            Assert.AreEqual(result.IsDataCollectionStarted, false);
             Assert.AreEqual(result.EnvironmentVariables, null);
             Assert.AreEqual(result.AreTestCaseLevelEventsRequired, false);
             Assert.AreEqual(result.DataCollectionEventsPort, 0);
@@ -148,7 +150,6 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
             if (this.sendBeforeTestRunStartAndGetResultThrowException)
             {
                 throw new Exception("SocketException");
-
             }
 
             this.sendBeforeTestRunStartAndGetResult = true;
@@ -172,5 +173,7 @@ namespace TestPlatform.CrossPlatEngine.UnitTests.DataCollection
             this.dataCollectorLaunched = true;
             return 1;
         }
+
+        public Process DataCollectorProcess { get; }
     }
 }

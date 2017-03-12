@@ -16,6 +16,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Engine;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.Utilities;
+    using Microsoft.VisualStudio.TestPlatform.ObjectModel.Host;
 
     /// <summary>
     /// Cross Platform test engine entry point for the client.
@@ -35,7 +36,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine
         /// </summary>
         /// <param name="testHostManager"></param>
         /// <returns>ITestDiscoveryManager object that can do discovery</returns>
-        public IProxyDiscoveryManager GetDiscoveryManager(ITestHostManager testHostManager, DiscoveryCriteria discoveryCriteria)
+        public IProxyDiscoveryManager GetDiscoveryManager(ITestRuntimeProvider testHostManager, DiscoveryCriteria discoveryCriteria)
         {
             int parallelLevel = this.VerifyParallelSettingAndCalculateParallelLevel(discoveryCriteria.Sources.Count(), discoveryCriteria.RunSettings);
 
@@ -58,20 +59,19 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine
         /// <returns>
         /// ITestExecutionManager object that can do execution
         /// </returns>
-        public IProxyExecutionManager GetExecutionManager(ITestHostManager testHostManager, TestRunCriteria testRunCriteria)
+        public IProxyExecutionManager GetExecutionManager(ITestRuntimeProvider testHostManager, TestRunCriteria testRunCriteria)
         {
             var distinctSources = GetDistinctNumberOfSources(testRunCriteria);
             int parallelLevel = this.VerifyParallelSettingAndCalculateParallelLevel(distinctSources, testRunCriteria.TestRunSettings);
 
             var runconfiguration = XmlRunSettingsUtilities.GetRunConfigurationNode(testRunCriteria.TestRunSettings);
-            var architecture = runconfiguration.TargetPlatform;
             var isDataCollectorEnabled = XmlRunSettingsUtilities.IsDataCollectionEnabled(testRunCriteria.TestRunSettings);
 
             // SetupChannel ProxyExecutionManager with data collection if data collectors are specififed in run settings.
             Func<IProxyExecutionManager> proxyExecutionManagerCreator =
                 () =>
                     isDataCollectorEnabled
-                        ? new ProxyExecutionManagerWithDataCollection(testHostManager, this.GetDataCollectionManager(architecture, testRunCriteria.TestRunSettings, runconfiguration.TargetFrameworkVersion.Name))
+                        ? new ProxyExecutionManagerWithDataCollection(testHostManager, new ProxyDataCollectionManager(testRunCriteria.TestRunSettings))
                         : new ProxyExecutionManager(testHostManager);
 
             // parallelLevel = 1 for desktop should go via else route.
@@ -100,7 +100,7 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine
         /// <param name="architecture">The architecture we want the test host manager for.</param>
         /// <param name="framework">Framework for the test session.</param>
         /// <returns>An instance of the test host manager.</returns>
-        public ITestHostManager GetDefaultTestHostManager(RunConfiguration runConfiguration)
+        public ITestRuntimeProvider GetDefaultTestHostManager(RunConfiguration runConfiguration)
         {
             var framework = runConfiguration.TargetFrameworkVersion;
 
@@ -177,28 +177,6 @@ namespace Microsoft.VisualStudio.TestPlatform.CrossPlatEngine
             }
 
             return parallelLevelToUse;
-        }
-
-        private IProxyDataCollectionManager GetDataCollectionManager(Architecture architecture, string settingsXml, string targetFramework)
-        {
-            try
-            {
-                return new ProxyDataCollectionManager(architecture, settingsXml, targetFramework);
-            }
-            catch (Exception ex)
-            {
-                if (EqtTrace.IsErrorEnabled)
-                {
-                    EqtTrace.Error("TestEngine: Error occured while initializing DataCollection Process: {0}", ex);
-                }
-
-                if (EqtTrace.IsWarningEnabled)
-                {
-                    EqtTrace.Warning("TestEngine: Skipping Data Collection");
-                }
-
-                return null;
-            }
         }
     }
 }

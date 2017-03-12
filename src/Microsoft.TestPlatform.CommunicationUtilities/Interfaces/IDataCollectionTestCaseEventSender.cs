@@ -3,10 +3,13 @@
 
 namespace Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.Interfaces
 {
+    using System.Collections.ObjectModel;
+
     using Microsoft.VisualStudio.TestPlatform.ObjectModel;
-    
+    using Microsoft.VisualStudio.TestPlatform.ObjectModel.DataCollection;
+
     /// <summary>
-    /// Interface for sending test case events from test exectuion process to data collection process
+    /// Interface for sending test case events from test execution process to data collection process
     /// </summary>
     internal interface IDataCollectionTestCaseEventSender
     {
@@ -31,14 +34,28 @@ namespace Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.Interfaces
         /// <summary>
         /// Sends the TestCaseStart event.
         /// </summary>
-        /// <param name="testCase">Test case for which execution has started.</param>
-        void SendTestCaseStart(TestCase testCase);
+        /// <param name="e">
+        /// The args containing info about TestCaseStart event.
+        /// </param>
+        void SendTestCaseStart(TestCaseStartEventArgs e);
 
         /// <summary>
         /// Sends the TestCaseCompleted event along with outcome.
         /// </summary>
-        /// <param name="testCase">Test case for which execution has completed.</param>
-        /// <param name="outcome">Outcome of test case execution</param>
-        void SendTestCaseCompleted(TestCase testCase, TestOutcome outcome);
+        /// <param name="e">
+        /// The args containing info about TestResult event.
+        /// </param>
+        /// <returns>
+        /// The <see cref="Collection"/>Collection of TestCase attachments.
+        /// </returns>
+        Collection<AttachmentSet> SendTestCaseEnd(TestCaseEndEventArgs e);
+
+        /// <summary>
+        /// Sends the SessionEnd event. This is used to as a trigger to close communication channel between datacollector process and testhost process.
+        /// </summary>
+        /// <param name="e">
+        /// The args containing info about SessionEnd event.
+        /// </param>
+        void SendTestSessionEnd(SessionEndEventArgs e);
     }
 }

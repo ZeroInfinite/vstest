@@ -3,21 +3,23 @@
 
 namespace Microsoft.VisualStudio.TestPlatform.CommunicationUtilities
 {
-    using System;
+    using System.Collections.ObjectModel;
 
     using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.Interfaces;
     using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.ObjectModel;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel;
     using Microsoft.VisualStudio.TestPlatform.ObjectModel.DataCollection;
 
-    internal class DataCollectionTestCaseEventSender : IDataCollectionTestCaseEventSender
+    public class DataCollectionTestCaseEventSender : IDataCollectionTestCaseEventSender
     {
+        private static readonly object syncObject = new object();
+
         private readonly ICommunicationManager communicationManager;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DataCollectionTestCaseEventSender"/> class. 
         /// </summary>
-        public DataCollectionTestCaseEventSender() : this(new SocketCommunicationManager())
+        protected DataCollectionTestCaseEventSender() : this(new SocketCommunicationManager())
         {
         }
 
@@ -25,9 +27,34 @@ namespace Microsoft.VisualStudio.TestPlatform.CommunicationUtilities
         /// Initializes a new instance of the <see cref="DataCollectionTestCaseEventSender"/> class. 
         /// </summary>
         /// <param name="communicationManager">Communication manager.</param>
-        public DataCollectionTestCaseEventSender(ICommunicationManager communicationManager)
+        protected DataCollectionTestCaseEventSender(ICommunicationManager communicationManager)
         {
             this.communicationManager = communicationManager;
+        }
+
+        /// <summary>
+        /// Gets the singleton instance of DataCollectionTestCaseEventSender.
+        /// </summary>
+        // todo : Refactor to pass the instance as singleton.
+        public static DataCollectionTestCaseEventSender Instance { get; private set; }
+
+        /// <summary>
+        /// Gets singleton instance of DataCollectionRequestHandler.
+        /// </summary>
+        public static DataCollectionTestCaseEventSender Create()
+        {
+            if (Instance == null)
+            {
+                lock (syncObject)
+                {
+                    if (Instance == null)
+                    {
+                        Instance = new DataCollectionTestCaseEventSender();
+                    }
+                }
+            }
+
+            return Instance;
         }
 
         /// <inheritdoc />
@@ -53,16 +80,31 @@ namespace Microsoft.VisualStudio.TestPlatform.CommunicationUtilities
         }
 
         /// <inheritdoc />
-        public void SendTestCaseStart(TestCase testCase)
+        public void SendTestCaseStart(TestCaseStartEventArgs e)
         {
-            this.communicationManager.SendMessage(MessageType.BeforeTestCaseStart, testCase);
+            this.communicationManager.SendMessage(MessageType.DataCollectionTestStart, e);
         }
 
         /// <inheritdoc />
-        public void SendTestCaseCompleted(TestCase testCase, TestOutcome outcome)
+        public Collection<AttachmentSet> SendTestCaseEnd(TestCaseEndEventArgs e)
         {
-            var message = JsonDataSerializer.Instance.Serialize<object[]>(new object[] { testCase, outcome });
-            this.communicationManager.SendMessage(MessageType.AfterTestCaseCompleted, message);
+            var attachmentSets = new Collection<AttachmentSet>();
+            this.communicationManager.SendMessage(MessageType.DataCollectionTestEnd, e);
+
+            var message = this.communicationManager.ReceiveMessage();
+
+            if (message.MessageType == MessageType.DataCollectionTestEndResult)
+            {
+                attachmentSets = message.Payload.ToObject<Collection<AttachmentSet>>();
+            }
+
+            return attachmentSets;
+        }
+
+        /// <inheritdoc />
+        public void SendTestSessionEnd(SessionEndEventArgs e)
+        {
+            this.communicationManager.SendMessage(MessageType.SessionEnd, e);
         }
     }
 }
